@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings" // Make sure strings is imported
+	"os"      // Make sure os is imported
 
 	"comfyui-api-service/comfyui" // Import your local comfyui package
 
@@ -24,42 +26,44 @@ func NewAPIHandler(client *comfyui.Client) *APIHandler {
 	}
 }
 
+// ErrorResponse is a generic structure for API error responses.
+type ErrorResponse struct {
+	Error   string `json:"error" example:"A human-readable error message"`
+	Details string `json:"details,omitempty" example:"Optional additional error details"`
+}
+
 // QueuePromptRequest represents the expected JSON body for queueing a prompt.
-// We need this separate struct for Swaggo documentation.
 type QueuePromptRequest struct {
-	Prompt map[string]interface{} `json:"prompt" binding:"required" example:"{\"3\": {\"inputs\": {\"seed\": 123, \"steps\": 20}}}"` // Example structure
+	Prompt map[string]interface{} `json:"prompt" binding:"required"`
 }
 
 // QueuePrompt godoc
 // @Summary      Queue a generation prompt
-// @Description  Sends a workflow prompt to the ComfyUI backend for processing.
+// @Description  Sends a workflow prompt to the ComfyUI backend for processing. The prompt field is a map where keys are node IDs (strings) and values are objects defining the node's class_type and inputs. Example: `{"3": {"class_type": "KSampler", "inputs": {"seed": 123}}}`
 // @Tags         ComfyUI
 // @Accept       json
 // @Produce      json
 // @Param        prompt body QueuePromptRequest true "The prompt workflow JSON and client ID"
 // @Success      200  {object} comfyui.PromptResponse "Successfully queued prompt"
-// @Failure      400  {object} gin.H "Bad Request (e.g., invalid JSON)"
-// @Failure      401  {object} gin.H "Unauthorized (Invalid or missing Bearer token)"
-// @Failure      500  {object} gin.H "Internal Server Error (e.g., ComfyUI unreachable)"
+// @Failure      400  {object} api.ErrorResponse "Bad Request (e.g., invalid JSON)"
+// @Failure      401  {object} api.ErrorResponse "Unauthorized (Invalid or missing Bearer token)"
+// @Failure      500  {object} api.ErrorResponse "Internal Server Error (e.g., ComfyUI unreachable)"
 // @Security     BearerAuth
 // @Router       /queue_prompt [post]
 func (h *APIHandler) QueuePrompt(c *gin.Context) {
 	var req QueuePromptRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid request body", Details: err.Error()})
 		return
 	}
 
-	// Use the Comfy Client - use ClientID from client or generate new one if needed
-	resp, err := h.ComfyClient.QueuePrompt(req.Prompt) // Uses client's default ID
+	resp, err := h.ComfyClient.QueuePrompt(req.Prompt)
 	if err != nil {
 		log.Printf("Error queueing prompt: %v", err)
-		// Distinguish between client errors (e.g., ComfyUI down) and other errors
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue prompt", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to queue prompt", Details: err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -70,15 +74,16 @@ func (h *APIHandler) QueuePrompt(c *gin.Context) {
 // @Produce      json
 // @Param        prompt_id path string true "The ID of the prompt" Format(uuid) example("a1b2c3d4-e5f6-7890-1234-567890abcdef")
 // @Success      200  {object} map[string]interface{} "Prompt history details"
-// @Failure      401  {object} gin.H "Unauthorized (Invalid or missing Bearer token)"
-// @Failure      404  {object} gin.H "Not Found (Prompt ID not found in ComfyUI)"
-// @Failure      500  {object} gin.H "Internal Server Error"
+// @Failure      400  {object} api.ErrorResponse "Bad Request (e.g., missing prompt_id)"
+// @Failure      401  {object} api.ErrorResponse "Unauthorized (Invalid or missing Bearer token)"
+// @Failure      404  {object} api.ErrorResponse "Not Found (Prompt ID not found in ComfyUI)"
+// @Failure      500  {object} api.ErrorResponse "Internal Server Error"
 // @Security     BearerAuth
 // @Router       /history/{prompt_id} [get]
 func (h *APIHandler) GetHistory(c *gin.Context) {
 	promptID := c.Param("prompt_id")
 	if promptID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "prompt_id path parameter is required"})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "prompt_id path parameter is required"})
 		return
 	}
 
@@ -86,20 +91,18 @@ func (h *APIHandler) GetHistory(c *gin.Context) {
 	if err != nil {
 		log.Printf("Error getting history for prompt %s: %v", promptID, err)
 		// Basic check if the error indicates not found (depends on comfyui client error wrapping)
-		if strings.Contains(err.Error(), "status: 404 Not Found") { // Example check
-			c.JSON(http.StatusNotFound, gin.H{"error": "Prompt history not found", "prompt_id": promptID})
+		if strings.Contains(err.Error(), "status: 404 Not Found") || strings.Contains(err.Error(), "not found") { // Example check
+			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Prompt history not found", Details: fmt.Sprintf("prompt_id: %s", promptID)})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get prompt history", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to get prompt history", Details: err.Error()})
 		}
 		return
 	}
 
 	if history == nil || len(history) == 0 {
-		// Might be redundant if the client call already handles 404, but safe to check.
-		c.JSON(http.StatusNotFound, gin.H{"error": "Prompt history not found or empty", "prompt_id": promptID})
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "Prompt history not found or empty", Details: fmt.Sprintf("prompt_id: %s", promptID)})
 		return
 	}
-
 	c.JSON(http.StatusOK, history)
 }
 
@@ -109,39 +112,40 @@ func (h *APIHandler) GetHistory(c *gin.Context) {
 // @Tags         ComfyUI
 // @Produce      image/png
 // @Produce      image/jpeg
+// @Produce      image/webp
+// @Produce      application/octet-stream
 // @Param        filename  query string true "Filename of the image" example("ComfyUI_00001_.png")
 // @Param        subfolder query string false "Subfolder containing the image (if any)" example("output")
-// @Param        type      query string true "Type of image (e.g., 'output', 'input', 'temp')" example("output") Enums(output, input, temp)
+// @Param        type      query string true "Type of image (e.g., 'output', 'input', 'temp')" example("output") Enums(output,input,temp)
 // @Success      200  {file} file "The requested image file"
-// @Failure      400  {object} gin.H "Bad Request (Missing required query parameters)"
-// @Failure      401  {object} gin.H "Unauthorized"
-// @Failure      404  {object} gin.H "Not Found (Image not found on ComfyUI server)"
-// @Failure      500  {object} gin.H "Internal Server Error"
+// @Failure      400  {object} api.ErrorResponse "Bad Request (Missing required query parameters)"
+// @Failure      401  {object} api.ErrorResponse "Unauthorized"
+// @Failure      404  {object} api.ErrorResponse "Not Found (Image not found on ComfyUI server)"
+// @Failure      500  {object} api.ErrorResponse "Internal Server Error"
 // @Security     BearerAuth
 // @Router       /image [get]
 func (h *APIHandler) GetImage(c *gin.Context) {
 	filename := c.Query("filename")
-	folderType := c.Query("type") // e.g., "output", "input", "temp"
-	subfolder := c.Query("subfolder") // Optional
+	folderType := c.Query("type")
+	subfolder := c.Query("subfolder")
 
 	if filename == "" || folderType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required query parameters: filename, type"})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Missing required query parameters: filename, type"})
 		return
 	}
 
 	imageData, err := h.ComfyClient.GetImage(filename, subfolder, folderType)
 	if err != nil {
 		log.Printf("Error getting image '%s': %v", filename, err)
-		if strings.Contains(err.Error(), "status: 404 Not Found") { // Example check
-			c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
+		if strings.Contains(err.Error(), "status: 404 Not Found") || strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Image not found"})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get image", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to get image", Details: err.Error()})
 		}
 		return
 	}
 
-	// Determine content type based on filename extension (basic)
-	contentType := "application/octet-stream" // Default
+	contentType := "application/octet-stream"
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
 	case ".png":
@@ -151,7 +155,6 @@ func (h *APIHandler) GetImage(c *gin.Context) {
 	case ".webp":
 		contentType = "image/webp"
 	}
-
 	c.Data(http.StatusOK, contentType, imageData)
 }
 
@@ -162,51 +165,47 @@ func (h *APIHandler) GetImage(c *gin.Context) {
 // @Accept       multipart/form-data
 // @Produce      json
 // @Param        image      formData file   true  "Image file to upload"
-// @Param        type       formData string true  "Type of upload (usually 'input')" example("input") Enums(input, temp)
+// @Param        type       formData string true  "Type of upload (usually 'input')" example("input") Enums(input,temp)
 // @Param        overwrite  formData bool   false "Overwrite existing file (default: false)" example(false)
 // @Success      200 {object} comfyui.UploadImageResponse "Image uploaded successfully"
-// @Failure      400 {object} gin.H "Bad Request (e.g., missing file or type)"
-// @Failure      401 {object} gin.H "Unauthorized"
-// @Failure      500 {object} gin.H "Internal Server Error (e.g., upload failed)"
+// @Failure      400 {object} api.ErrorResponse "Bad Request (e.g., missing file or type)"
+// @Failure      401 {object} api.ErrorResponse "Unauthorized"
+// @Failure      500 {object} api.ErrorResponse "Internal Server Error (e.g., upload failed)"
 // @Security     BearerAuth
 // @Router       /upload_image [post]
 func (h *APIHandler) UploadImage(c *gin.Context) {
 	imageType := c.PostForm("type")
-	overwriteStr := c.PostForm("overwrite") // Defaults to "false" if not present
+	overwriteStr := c.PostForm("overwrite")
 	overwrite := overwriteStr == "true"
 
 	if imageType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Form field 'type' is required"})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Form field 'type' is required"})
 		return
 	}
 
 	fileHeader, err := c.FormFile("image")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Form field 'image' (file) is required", "details": err.Error()})
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Form field 'image' (file) is required", Details: err.Error()})
 		return
 	}
 
-	// Save uploaded file to a temporary location to pass its path to the client
-	// Alternatively, the comfyui client could be modified to accept an io.Reader
 	tmpFileName := filepath.Join(os.TempDir(), fmt.Sprintf("upload_%s_%s", uuid.NewString(), fileHeader.Filename))
 	if err := c.SaveUploadedFile(fileHeader, tmpFileName); err != nil {
 		log.Printf("Error saving temporary upload file: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process uploaded file", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to process uploaded file", Details: err.Error()})
 		return
 	}
 	defer func() {
 		if err := os.Remove(tmpFileName); err != nil {
 			log.Printf("Warning: failed to remove temporary upload file %s: %v", tmpFileName, err)
 		}
-	}() // Clean up temp file
+	}()
 
-	// Use the original filename for the ComfyUI upload 'name' parameter
 	uploadResp, err := h.ComfyClient.UploadImage(tmpFileName, fileHeader.Filename, imageType, overwrite)
 	if err != nil {
 		log.Printf("Error uploading image to ComfyUI: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload image", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to upload image", Details: err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, uploadResp)
 }
