@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -9,8 +10,8 @@ import (
 )
 
 type Config struct {
-	ComfyUIBaseURL    string
-	GoogleClientID    string
+	ComfyUIBaseURL string
+	GoogleClientID string
 	// GoogleClientSecret string // Secret might not be needed for just validating access tokens
 	AllowedAuthDomain string // Optional: Restrict login to a specific GSuite domain (e.g., "yourcompany.com")
 	ServerPort        string
@@ -27,7 +28,7 @@ func LoadConfig() *Config {
 	cfg := &Config{
 		ComfyUIBaseURL:    getEnv("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
 		GoogleClientID:    getEnvOrPanic("GOOGLE_CLIENT_ID"), // Required
-		AllowedAuthDomain: getEnv("ALLOWED_AUTH_DOMAIN", ""),   // Optional
+		AllowedAuthDomain: getEnv("ALLOWED_AUTH_DOMAIN", ""), // Optional
 		ServerPort:        getEnv("SERVER_PORT", "8080"),
 		GinMode:           getEnv("GIN_MODE", "release"),
 	}

@@ -380,8 +380,6 @@ var SwaggerInfo = &swag.Spec{
 	Description:      "Exposes ComfyUI client functions as a RESTful API secured by Google OAuth.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
-	LeftDelim:        "{{",
-	RightDelim:       "}}",
 }
 
 func init() {

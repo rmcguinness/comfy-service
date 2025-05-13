@@ -3,6 +3,7 @@ package comfyui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"         // For generating client_id
+	"github.com/google/uuid"       // For generating client_id
 	"github.com/gorilla/websocket" // A popular WebSocket library for Go
 )
 

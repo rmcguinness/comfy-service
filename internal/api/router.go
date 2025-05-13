@@ -5,6 +5,7 @@ import (
 	"comfyui-api-service/internal/auth"
 	"comfyui-api-service/internal/config"
 	_ "comfyui-api-service/internal/docs" // Import generated docs
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -26,9 +27,10 @@ func SetupRouter(cfg *config.Config, comfyClient *comfyui.Client) *gin.Engine {
 	swaggerURL := ginSwagger.URL("/swagger/doc.json") // The url pointing to API definition
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, swaggerURL,
 		ginSwagger.PersistAuthorization(true), // Allow saving auth token in Swagger UI
-		ginSwagger.Security(gin.SwaggerSecurity{ // Define the security scheme name used in annotations
-			"BearerAuth": {},
-		}),
+		// TODO - Fix Swagger Utitiy
+		// ginSwagger.Security(gin.SwaggerSecurity{ // Define the security scheme name used in annotations
+		// 	"BearerAuth": {},
+		// }),
 	))
 
 	// Create API handler instance

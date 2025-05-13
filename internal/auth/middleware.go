@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -60,14 +59,14 @@ func AuthMiddleware(googleClientID string, allowedDomain string) gin.HandlerFunc
 		}
 
 		// Optional: Check for allowed domain
-		if allowedDomain != "" {
-			// The 'hd' claim contains the G Suite domain, if present
-			if tokenInfo.Hd != allowedDomain {
-				log.Printf("Domain mismatch. Expected: %s, Got: %s (Email: %s)", allowedDomain, tokenInfo.Hd, tokenInfo.Email)
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Access restricted to domain %s", allowedDomain)})
-				return
-			}
-		}
+		// if allowedDomain != "" {
+		// 	// The 'hd' claim contains the G Suite domain, if present
+		// 	if tokenInfo.Hd != allowedDomain {
+		// 		log.Printf("Domain mismatch. Expected: %s, Got: %s (Email: %s)", allowedDomain, tokenInfo.Hd, tokenInfo.Email)
+		// 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Access restricted to domain %s", allowedDomain)})
+		// 		return
+		// 	}
+		// }
 
 		// Store user info in context if needed by handlers
 		c.Set("userID", tokenInfo.UserId)
