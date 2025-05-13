@@ -1,0 +1,50 @@
+# Use a base image with Python and CUDA support appropriate for the GPU you'll select
+# Find suitable images on NVIDIA's NGC Catalog or Docker Hub (e.g., nvidia/cuda)
+# Example using a generic Python image - you might need a CUDA-specific one!
+# Consider python:3.10, python:3.11 etc. based on ComfyUI compatibility
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /
+
+# Install git and other dependencies if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone ComfyUI Repository
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git
+
+# Set working directory to ComfyUI
+WORKDIR /ComfyUI
+
+# Create a Python virtual environment
+RUN python -m venv /ComfyUI/venv
+
+# Activate venv and install requirements
+# Need to run pip within the context of the venv activation
+# Note: requirements.txt might require specific CUDA toolkit versions.
+# Ensure your base image and requirements align with your target GPU.
+# Consider using --extra-index-url for PyTorch CUDA versions if needed.
+RUN . /ComfyUI/venv/bin/activate && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir xformers # Often needed for performance
+
+# Optional: Pre-download models here using wget/git clone into /ComfyUI/models/
+# RUN wget -O /ComfyUI/models/checkpoints/sd_xl_base_1.0.safetensors <URL_TO_MODEL>
+# RUN wget -O /ComfyUI/models/loras/your_lora.safetensors <URL_TO_LORA>
+
+# Expose the ComfyUI port
+EXPOSE 8188
+
+# Define the command to run ComfyUI
+# Use --listen to bind to 0.0.0.0, required for Cloud Run
+# Use --port to specify the port Cloud Run will connect to
+# Add --enable-cors-headers if accessing API from different origins
+# Add --preview-method auto if needed for previews
+# The CMD activates the venv then runs main.py
+CMD ["/bin/bash", "-c", ". /ComfyUI/venv/bin/activate && python main.py --listen 0.0.0.0 --port 8188 --enable-cors-headers"]
+
+# You might need flags like --gpu-only depending on your setup/models
+# CMD ["/bin/bash", "-c", ". /ComfyUI/venv/bin/activate && python main.py --listen 0.0.0.0 --port 8188 --enable-cors-headers --gpu-only"]
