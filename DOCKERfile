@@ -1,50 +1,69 @@
-# Use a base image with Python and CUDA support appropriate for the GPU you'll select
-# Find suitable images on NVIDIA's NGC Catalog or Docker Hub (e.g., nvidia/cuda)
-# Example using a generic Python image - you might need a CUDA-specific one!
-# Consider python:3.10, python:3.11 etc. based on ComfyUI compatibility
-FROM python:3.11-slim
+# Stage 1: Build the Go application
+FROM golang:1.22-alpine AS go_builder
 
-# Set working directory
+WORKDIR /app
+
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+# Copy the rest of your Go application source code
+# Assuming your Go app root (where go.mod is) is at the same level as this Dockerfile
+# and contains cmd/server/main.go and other packages like internal/, comfyui/
+COPY . .
+
+# Compile the Go application
+# Adjust the path to your main.go if it's different
+# This creates a static binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go-api-server ./cmd/server/main.go
+
+
+# Stage 2: Setup ComfyUI and the final runtime environment
+# Use a base image with Python and CUDA support appropriate for the GPU you'll select
+FROM python:3.11-slim
+# FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04 # Example NVIDIA base image
+
+LABEL maintainer="Your Name <your.email@example.com>"
+LABEL description="ComfyUI with Go Gin API frontend, managed by Supervisor"
+
 WORKDIR /
 
-# Install git and other dependencies if needed
+# Install git, supervisor, and other dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget \
+    supervisor \
+    # Add any other system dependencies needed by Python or Go app
     && rm -rf /var/lib/apt/lists/*
 
-# Clone ComfyUI Repository
+# --- ComfyUI Setup ---
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git
-
-# Set working directory to ComfyUI
 WORKDIR /ComfyUI
-
-# Create a Python virtual environment
 RUN python -m venv /ComfyUI/venv
-
 # Activate venv and install requirements
-# Need to run pip within the context of the venv activation
-# Note: requirements.txt might require specific CUDA toolkit versions.
-# Ensure your base image and requirements align with your target GPU.
-# Consider using --extra-index-url for PyTorch CUDA versions if needed.
 RUN . /ComfyUI/venv/bin/activate && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir xformers # Often needed for performance
 
-# Optional: Pre-download models here using wget/git clone into /ComfyUI/models/
-# RUN wget -O /ComfyUI/models/checkpoints/sd_xl_base_1.0.safetensors <URL_TO_MODEL>
-# RUN wget -O /ComfyUI/models/loras/your_lora.safetensors <URL_TO_LORA>
+# --- Go API Server Setup ---
+WORKDIR /app
+COPY --from=go_builder /go-api-server /app/go-api-server
+# Ensure the Go binary is executable
+RUN chmod +x /app/go-api-server
 
-# Expose the ComfyUI port
-EXPOSE 8188
+# --- Supervisor Setup ---
+# Copy supervisor configuration file (create supervisord.conf next to your Dockerfile)
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Define the command to run ComfyUI
-# Use --listen to bind to 0.0.0.0, required for Cloud Run
-# Use --port to specify the port Cloud Run will connect to
-# Add --enable-cors-headers if accessing API from different origins
-# Add --preview-method auto if needed for previews
-# The CMD activates the venv then runs main.py
-CMD ["/bin/bash", "-c", ". /ComfyUI/venv/bin/activate && python main.py --listen 0.0.0.0 --port 8188 --enable-cors-headers"]
+# Optional: Create log directories for supervisor if not using stdout/stderr
+RUN mkdir -p /var/log/supervisor
 
-# You might need flags like --gpu-only depending on your setup/models
-# CMD ["/bin/bash", "-c", ". /ComfyUI/venv/bin/activate && python main.py --listen 0.0.0.0 --port 8188 --enable-cors-headers --gpu-only"]
+# --- Expose Ports ---
+# Port for the Go Gin API (this is what Cloud Run will route traffic to)
+EXPOSE 8080
+# ComfyUI's internal port (not directly exposed by Cloud Run, but used by Go app)
+# EXPOSE 8188 # Not strictly necessary to EXPOSE internal ports
+
+# --- Entrypoint ---
+# Start Supervisor to manage both processes
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
