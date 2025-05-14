@@ -16,7 +16,7 @@ A simplified wrapper around the ComfyUI WebSocket interfaces.
     9. Start ComfyUI `python main.py`
 
 > NOTE: If you're on a Mac, you'll need to install Python 3.11 and ensure you're executing the python3 from the 3.11 home.
-> /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m venv .venv
+> `/Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m venv .venv`
 
 ### Create a .env file
 
