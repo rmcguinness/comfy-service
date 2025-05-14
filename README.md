@@ -18,6 +18,14 @@ A simplified wrapper around the ComfyUI WebSocket interfaces.
 > NOTE: If you're on a Mac, you'll need to install Python 3.11 and ensure you're executing the python3 from the 3.11 home.
 > /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m venv .venv
 
+### Create a .env file
+
+```conf
+COMFYUI_BASE_URL=http://localhost:8188
+GOOGLE_CLIENT_ID=**insert your client id here**
+ALLOWED_AUTH_DOMAIN=localhost:8080
+```
+
 ## Build
 
 ```shell
