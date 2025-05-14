@@ -1,41 +1,171 @@
 # Comfy Service Wrapper
 
-go get github.com/google/uuid
-go get github.com/gorilla/websocket
-go get github.com/stretchr/testify
-go get swagger
+A simplified wrapper around the ComfyUI WebSocket interfaces.
 
+## Prerequisite  
 
-swag init -g cmd/server/main.go -o internal/docs/         at  07:41:22 PM
+1. Install Comfy UI
+    1. `mkdir -p Projects`
+    2. `cd Projects`
+    3. `git clone git@github.com:comfyanonymous/ComfyUI.git`
+    4. `cd ComfyUI`
+    5. `python3 -m venv .venv`
+    6. `source .venv/bin/activate`
+    7. `pip install -r requirements.txt`
+    8. Download a model (checkpoint)9https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/blob/main/v1-5-pruned-emaonly.safetensors] and put in the `models/checkpoints` directory in your ComfyUI home. 
+    9. Start ComfyUI `python main.py`
 
+> NOTE: If you're on a Mac, you'll need to install Python 3.11 and ensure you're executing the python3 from the 3.11 home.
+> /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m venv .venv
 
+## Build
 
+```shell
+# From the project root
+go build ./...
+
+# Run the API
+go run ./cmd/server/main.go
+```
+
+## Generate the Swagger documentation
+```shell
+# Generate the Swagger documentation.
+swag init -g cmd/server/main.go -o internal/docs/
+
+```
+
+## Publish the Docker Image on GCR
+
+```shell
 # 1. Authenticate Docker with GAR (replace PROJECT_ID and REGION)
-# gcloud auth configure-docker REGION-docker.pkg.dev
+gcloud auth configure-docker REGION-docker.pkg.dev
 
 # 2. Build the image (replace relevant parts)
-# docker build -t REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY/comfyui-cloudrun:latest -f Dockerfile .
+docker build -t REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY/comfyui-cloudrun:latest -f Dockerfile .
 
 # 3. Push the image
-# docker push REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY/comfyui-cloudrun:latest
+docker push REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY/comfyui-cloudrun:latest
+```
 
+## Using Terraform
 
-Summary of Changes and Workflow:
-
-Project Structure:
-Your Go application code (with cmd/server/main.go, internal/, comfyui/ client, go.mod, go.sum).
-The Dockerfile (new one provided above).
-The supervisord.conf file (newly created).
-Your Terraform files (main.tf, etc.).
-Build Process (Manual or CI/CD - before Terraform):
-Ensure your Go application (comfyui-api-service) is in the root of the build context when Docker runs, or adjust COPY . . in the go_builder stage.
-Run docker build -t YOUR_IMAGE_URL . (from the directory containing the Dockerfile, Go app source, and supervisord.conf).
-Push the image: docker push YOUR_IMAGE_URL.
-Terraform Variables:
-Update var.container_image_url with the new image URL.
-Provide values for var.go_app_google_client_id and optionally var.go_app_allowed_auth_domain.
-Terraform Deployment:
+```shell
+cd terraform
 terraform init
 terraform plan
 terraform apply
-Now, Cloud Run will start your container. supervisord will then launch both your compiled Go Gin API service (listening on the SERVER_PORT, e.g., 8080, and configured to talk to http://127.0.0.1:8188) and the ComfyUI Python server (listening on 127.0.0.1:8188). Cloud Run will route external traffic to the port your Go service is listening on.
+```
+
+## Example Prompt
+
+```json
+{ "prompt": {
+  "3": {
+    "inputs": {
+      "seed": 780438972461674,
+      "steps": 20,
+      "cfg": 8,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "4": {
+    "inputs": {
+      "ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "5": {
+    "inputs": {
+      "width": 512,
+      "height": 512,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "beautiful scenery nature glass bottle landscape, , purple galaxy bottle,",
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "text, watermark",
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
+}
+```

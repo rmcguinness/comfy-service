@@ -2,21 +2,23 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"google.golang.org/api/oauth2/v2" // Use Google's library for validation
+	"google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/option"
 )
 
 // AuthMiddleware creates a Gin middleware for Google OAuth token validation.
+// It verifies Bearer tokens using Google's tokeninfo endpoint and then
+// retrieves user details including the G Suite domain (hd claim) from the userinfo endpoint.
 func AuthMiddleware(googleClientID string, allowedDomain string) gin.HandlerFunc {
-	// Initialize Google OAuth2 service (can be done once)
-	oauth2Service, err := oauth2.NewService(context.Background(), option.WithoutAuthentication()) // No auth needed to call tokeninfo
+	oauth2Service, err := oauth2.NewService(context.Background(), option.WithoutAuthentication())
 	if err != nil {
-		log.Fatalf("Failed to create OAuth2 service: %v", err)
+		log.Fatalf("Failed to create Google OAuth2 service: %v", err)
 	}
 
 	return func(c *gin.Context) {
@@ -28,50 +30,69 @@ func AuthMiddleware(googleClientID string, allowedDomain string) gin.HandlerFunc
 
 		parts := strings.Split(authHeader, " ")
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be 'Bearer {token}'"})
 			return
 		}
 		token := parts[1]
 
-		// Validate the token using Google's tokeninfo endpoint
-		tokenInfoCall := oauth2Service.Tokeninfo()
-		tokenInfoCall.AccessToken(token) // Send token for validation
-		tokenInfo, err := tokenInfoCall.Do()
+		fmt.Printf("Received token: %s\n", token)
 
+
+		// Validate the access token using the tokeninfo endpoint
+		tokenInfoCall := oauth2Service.Tokeninfo()
+		tokenInfoCall.AccessToken(token)
+
+		tokenInfo, err := tokenInfoCall.Do()
 		if err != nil {
 			log.Printf("Token validation error: %v", err)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token", "details": err.Error()})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token or token validation failed"})
 			return
 		}
 
-		// **IMPORTANT SECURITY CHECK:** Validate the audience claim matches your Client ID.
-		// This ensures the token was intended for your application.
 		if tokenInfo.Audience != googleClientID {
-			log.Printf("Token audience mismatch. Expected: %s, Got: %s", googleClientID, tokenInfo.Audience)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token audience"})
+			log.Printf("Token audience mismatch. Expected: %s, Got: %s, User: %s", googleClientID, tokenInfo.Audience, tokenInfo.Email)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token audience. Token not intended for this application."})
 			return
 		}
 
-		// Check if token is expired (Google's API might already do this, but good practice)
 		if tokenInfo.ExpiresIn <= 0 {
+			log.Printf("Expired token received for User: %s, Audience: %s", tokenInfo.Email, tokenInfo.Audience)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token expired"})
 			return
 		}
 
-		// Optional: Check for allowed domain
-		// if allowedDomain != "" {
-		// 	// The 'hd' claim contains the G Suite domain, if present
-		// 	if tokenInfo.Hd != allowedDomain {
-		// 		log.Printf("Domain mismatch. Expected: %s, Got: %s (Email: %s)", allowedDomain, tokenInfo.Hd, tokenInfo.Email)
-		// 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Access restricted to domain %s", allowedDomain)})
-		// 		return
-		// 	}
-		// }
+		// Now, retrieve user details from the userinfo endpoint to get the 'hd' (hosted domain) claim
+		// The Userinfo service is part of the oauth2/v2 package.
+		userinfoService := oauth2.NewUserinfoService(oauth2Service)
+		userInfo, err := userinfoService.Get().Do() // This uses the context from the oauth2Service
+		if err != nil {
+			log.Printf("Failed to retrieve userinfo: %v", err)
+			// If userinfo cannot be retrieved, it's a server-side issue or an invalid token for userinfo
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve user details for domain validation."})
+			return
+		}
 
-		// Store user info in context if needed by handlers
+		// Optional: Restrict access to a specific G Suite domain (hd claim).
+		if allowedDomain != "" {
+			// userInfo.Hd contains the G Suite domain, if present.
+			if userInfo.Hd != allowedDomain {
+				log.Printf("Domain mismatch. Expected: %s, User's domain (hd claim): '%s', User Email: %s", allowedDomain, userInfo.Hd, userInfo.Email)
+				userDomainMsg := userInfo.Hd
+				if userDomainMsg == "" {
+					userDomainMsg = "(not provided or not a G Suite account)"
+				}
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("Access restricted. User's domain '%s' is not allowed. Required domain: '%s'", userDomainMsg, allowedDomain)})
+				return
+			}
+		}
+
+		// Set user information in Gin context
 		c.Set("userID", tokenInfo.UserId)
 		c.Set("userEmail", tokenInfo.Email)
+		c.Set("verifiedEmail", tokenInfo.VerifiedEmail)
+		c.Set("tokenScopes", tokenInfo.Scope)
+		c.Set("userHostedDomain", userInfo.Hd) // Set the hosted domain if available
 
-		c.Next() // Token is valid, proceed to the handler
+		c.Next() // Proceed to the next handler
 	}
 }
